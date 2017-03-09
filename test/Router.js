@@ -53,6 +53,31 @@ describe('Router', function(){
     router.handle({ url: '', method: 'GET' }, {}, done);
   });
 
+  it('should handle missing URL', function (done) {
+    var router = new Router()
+
+    router.use(function (req, res) {
+      throw new Error('should not be called')
+    })
+
+    router.handle({ method: 'GET' }, {}, done)
+  })
+
+  it('should not stack overflow with many registered routes', function(done){
+    var handler = function(req, res){ res.end(new Error('wrong handler')) };
+    var router = new Router();
+
+    for (var i = 0; i < 6000; i++) {
+      router.get('/thing' + i, handler)
+    }
+
+    router.get('/', function (req, res) {
+      res.end();
+    });
+
+    router.handle({ url: '/', method: 'GET' }, { end: done });
+  });
+
   describe('.handle', function(){
     it('should dispatch', function(done){
       var router = new Router();
@@ -219,6 +244,23 @@ describe('Router', function(){
       });
     });
 
+    it('should ignore FQDN in path', function (done) {
+      var request = { hit: 0, url: '/proxy/http://example.com/blog/post/1', method: 'GET' };
+      var router = new Router();
+
+      router.use('/proxy', function (req, res, next) {
+        assert.equal(req.hit++, 0);
+        assert.equal(req.url, '/http://example.com/blog/post/1');
+        next();
+      });
+
+      router.handle(request, {}, function (err) {
+        if (err) return done(err);
+        assert.equal(request.hit, 1);
+        done();
+      });
+    });
+
     it('should adjust FQDN req.url', function (done) {
       var request = { hit: 0, url: 'http://example.com/blog/post/1', method: 'GET' };
       var router = new Router();
@@ -305,6 +347,24 @@ describe('Router', function(){
       assert.equal(count, methods.length);
       done();
     })
+
+    it('should be called for any URL when "*"', function (done) {
+      var cb = after(4, done)
+      var router = new Router()
+
+      function no () {
+        throw new Error('should not be called')
+      }
+
+      router.all('*', function (req, res) {
+        res.end()
+      })
+
+      router.handle({ url: '/', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: '/foo', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: 'foo', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: '*', method: 'GET' }, { end: cb }, no)
+    })
   })
 
   describe('.use', function() {
@@ -319,6 +379,24 @@ describe('Router', function(){
       router.use.bind(router, '/', 5).should.throw(/requires middleware function.*number/)
       router.use.bind(router, '/', null).should.throw(/requires middleware function.*Null/)
       router.use.bind(router, '/', new Date()).should.throw(/requires middleware function.*Date/)
+    })
+
+    it('should be called for any URL', function (done) {
+      var cb = after(4, done)
+      var router = new Router()
+
+      function no () {
+        throw new Error('should not be called')
+      }
+
+      router.use(function (req, res) {
+        res.end()
+      })
+
+      router.handle({ url: '/', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: '/foo', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: 'foo', method: 'GET' }, { end: cb }, no)
+      router.handle({ url: '*', method: 'GET' }, { end: cb }, no)
     })
 
     it('should accept array of middleware', function(done){

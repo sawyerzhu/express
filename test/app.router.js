@@ -11,7 +11,7 @@ describe('app.router', function(){
     var router = new express.Router();
 
     function handler1(req, res, next){
-      res.setHeader('x-user-id', req.params.id);
+      res.setHeader('x-user-id', String(req.params.id));
       next()
     }
 
@@ -20,7 +20,7 @@ describe('app.router', function(){
     }
 
     router.use(function(req, res, next){
-      res.setHeader('x-router', req.params.id);
+      res.setHeader('x-router', String(req.params.id));
       next();
     });
 
@@ -77,7 +77,7 @@ describe('app.router', function(){
 
       request(app)
       .get('/')
-      .expect(404, 'Cannot GET /\n', cb);
+      .expect(404, cb)
 
       request(app)
       .delete('/')
@@ -90,7 +90,7 @@ describe('app.router', function(){
     });
   })
 
-  describe('decode querystring', function(){
+  describe('decode params', function () {
     it('should decode correct params', function(done){
       var app = express();
 
@@ -320,6 +320,22 @@ describe('app.router', function(){
       .expect(200, '[["0","10"],["1","tj"],["2","profile"]]', done);
     })
 
+    it('should merge numeric indices req.params when parent has same number', function(done){
+      var app = express();
+      var router = new express.Router({ mergeParams: true });
+
+      router.get('/name:(\\w+)', function(req, res){
+        var keys = Object.keys(req.params).sort();
+        res.send(keys.map(function(k){ return [k, req.params[k]] }));
+      });
+
+      app.use('/user/id:(\\d+)', router);
+
+      request(app)
+      .get('/user/id:10/name:tj')
+      .expect(200, '[["0","10"],["1","tj"]]', done);
+    })
+
     it('should ignore invalid incoming req.params', function(done){
       var app = express();
       var router = new express.Router({ mergeParams: true });
@@ -337,6 +353,26 @@ describe('app.router', function(){
       request(app)
       .get('/user/tj')
       .expect(200, '[["name","tj"]]', done);
+    })
+
+    it('should restore req.params', function(done){
+      var app = express();
+      var router = new express.Router({ mergeParams: true });
+
+      router.get('/user:(\\w+)/*', function (req, res, next) {
+        next();
+      });
+
+      app.use('/user/id:(\\d+)', function (req, res, next) {
+        router(req, res, function (err) {
+          var keys = Object.keys(req.params).sort();
+          res.send(keys.map(function(k){ return [k, req.params[k]] }));
+        });
+      });
+
+      request(app)
+      .get('/user/id:42/user:tj/profile')
+      .expect(200, '[["0","42"]]', done);
     })
   })
 
@@ -503,8 +539,8 @@ describe('app.router', function(){
 
     request(app)
     .get('/user/10')
-    .end(function(err, res){
-      res.statusCode.should.equal(200);
+    .expect(200, function (err) {
+      if (err) return done(err)
       request(app)
       .get('/user/tj')
       .expect(404, done);
@@ -527,6 +563,30 @@ describe('app.router', function(){
   })
 
   describe('*', function(){
+    it('should capture everything', function (done) {
+      var app = express()
+
+      app.get('*', function (req, res) {
+        res.end(req.params[0])
+      })
+
+      request(app)
+      .get('/user/tobi.json')
+      .expect('/user/tobi.json', done)
+    })
+
+    it('should decore the capture', function (done) {
+      var app = express()
+
+      app.get('*', function (req, res) {
+        res.end(req.params[0])
+      })
+
+      request(app)
+      .get('/user/tobi%20and%20loki.json')
+      .expect('/user/tobi and loki.json', done)
+    })
+
     it('should denote a greedy capture group', function(done){
       var app = express();
 
@@ -641,6 +701,30 @@ describe('app.router', function(){
       .get('/file')
       .expect(404, done);
     })
+
+    it('should keep correct parameter indexes', function(done){
+      var app = express();
+
+      app.get('/*/user/:id', function (req, res) {
+        res.send(req.params);
+      });
+
+      request(app)
+      .get('/1/user/2')
+      .expect(200, '{"0":"1","id":"2"}', done);
+    })
+
+    it('should work within arrays', function(done){
+      var app = express();
+
+      app.get(['/user/:id', '/foo/*', '/:bar'], function (req, res) {
+        res.send(req.params.bar);
+      });
+
+      request(app)
+      .get('/test')
+      .expect(200, 'test', done);
+    })
   })
 
   describe(':name', function(){
@@ -677,6 +761,35 @@ describe('app.router', function(){
 
       request(app)
       .get('/user/tj/edit')
+      .expect('editing tj', done);
+    })
+
+    it('should work following a partial capture group', function(done){
+      var app = express();
+      var cb = after(2, done);
+
+      app.get('/user(s)?/:user/:op', function(req, res){
+        res.end(req.params.op + 'ing ' + req.params.user + (req.params[0] ? ' (old)' : ''));
+      });
+
+      request(app)
+      .get('/user/tj/edit')
+      .expect('editing tj', cb);
+
+      request(app)
+      .get('/users/tj/edit')
+      .expect('editing tj (old)', cb);
+    })
+
+    it('should work inside literal parenthesis', function(done){
+      var app = express();
+
+      app.get('/:user\\(:op\\)', function(req, res){
+        res.end(req.params.op + 'ing ' + req.params.user);
+      });
+
+      request(app)
+      .get('/tj(edit)')
       .expect('editing tj', done);
     })
 
@@ -809,6 +922,37 @@ describe('app.router', function(){
       });
 
       app.get('/foo', function(req, res){
+        res.end('success')
+      })
+
+      request(app)
+      .get('/foo')
+      .expect('X-Hit', '1')
+      .expect(200, 'success', done)
+    })
+  })
+
+  describe('when next("router") is called', function () {
+    it('should jump out of router', function (done) {
+      var app = express()
+      var router = express.Router()
+
+      function fn (req, res, next) {
+        res.set('X-Hit', '1')
+        next('router')
+      }
+
+      router.get('/foo', fn, function (req, res, next) {
+        res.end('failure')
+      })
+
+      router.get('/foo', function (req, res, next) {
+        res.end('failure')
+      })
+
+      app.use(router)
+
+      app.get('/foo', function (req, res) {
         res.end('success')
       })
 

@@ -28,11 +28,7 @@ describe('req', function(){
         request(app)
         .get('/')
         .set('Cookie', cookie)
-        .end(function(err, res){
-          if (err) return don(err);
-          res.body.should.eql({ obj: { foo: 'bar' } });
-          done();
-        });
+        .expect(200, { obj: { foo: 'bar' } }, done)
       });
     })
   })

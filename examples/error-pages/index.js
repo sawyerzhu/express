@@ -3,13 +3,14 @@
  */
 
 var express = require('../../');
+var path = require('path');
 var app = module.exports = express();
 var logger = require('morgan');
 var silent = 'test' == process.env.NODE_ENV;
 
 // general config
-app.set('views', __dirname + '/views');
-app.set('view engine', 'jade');
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'ejs');
 
 // our custom "verbose errors" setting
 // which we can use in the templates
@@ -25,7 +26,7 @@ silent || app.use(logger('dev'));
 // Routes
 
 app.get('/', function(req, res){
-  res.render('index.jade');
+  res.render('index.ejs');
 });
 
 app.get('/404', function(req, res, next){
@@ -60,20 +61,17 @@ app.get('/500', function(req, res, next){
 app.use(function(req, res, next){
   res.status(404);
 
-  // respond with html page
-  if (req.accepts('html')) {
-    res.render('404', { url: req.url });
-    return;
-  }
-
-  // respond with json
-  if (req.accepts('json')) {
-    res.send({ error: 'Not found' });
-    return;
-  }
-
-  // default to plain-text. send()
-  res.type('txt').send('Not found');
+  res.format({
+    html: function () {
+      res.render('404', { url: req.url })
+    },
+    json: function () {
+      res.json({ error: 'Not found' })
+    },
+    default: function () {
+      res.type('txt').send('Not found')
+    }
+  })
 });
 
 // error-handling middleware, take the same form
@@ -95,7 +93,6 @@ app.use(function(err, req, res, next){
   res.status(err.status || 500);
   res.render('500', { error: err });
 });
-
 
 /* istanbul ignore next */
 if (!module.parent) {
